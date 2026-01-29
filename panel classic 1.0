@@ -1,7 +1,7 @@
 --[[
     ╔══════════════════════════════════════════╗
     ║   PANEL PVP CLASSIC MENU 1.0            ║
-    ║   ESP HEALTH CORRIGIDO + COLORS FIXO    ║
+    ║   VERSÃO FINAL - TUDO CORRIGIDO         ║
     ╚══════════════════════════════════════════╝
 ]]
 
@@ -40,6 +40,7 @@ local Settings = {
         Team = false,
         Chams = false,
         ChamsTeam = false,
+        ChamsSkin = false,
         Health = false,
         Name = false,
         Meters = false,
@@ -49,13 +50,13 @@ local Settings = {
     },
     Colors = {
         General = Color3.fromRGB(255, 255, 255),
+        GeneralR = 255,
+        GeneralG = 255,
+        GeneralB = 255,
         PanelOnly = Color3.fromRGB(255, 255, 255),
-        GeneralH = 0,
-        GeneralS = 0,
-        GeneralL = 100,
-        PanelH = 0,
-        PanelS = 0,
-        PanelL = 100
+        PanelR = 255,
+        PanelG = 255,
+        PanelB = 255
     },
     Various = {
         NoClip = false,
@@ -83,6 +84,43 @@ local JumpPowerConnection = nil
 local OriginalHitboxSizes = {}
 local CurrentTarget = nil
 local GUI = nil
+local TeleportPoints = {} -- Pontos de teleporte salvos
+
+-- Dash Key
+_G.DashKey = Enum.KeyCode.Q
+
+-- Função DASH
+local function PerformDash()
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        local humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
+        
+        if humanoid then
+            -- Salvar CanCollide original de todas as partes
+            local originalCollisions = {}
+            for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    originalCollisions[part] = part.CanCollide
+                    part.CanCollide = false
+                end
+            end
+            
+            -- Dash na direção da câmera (pequeno)
+            local dashDirection = Camera.CFrame.LookVector
+            local dashDistance = 15 -- Distância pequena
+            
+            hrp.CFrame = hrp.CFrame + (dashDirection * dashDistance)
+            
+            -- Aguardar um pouco e restaurar colisões
+            task.wait(0.1)
+            for part, collision in pairs(originalCollisions) do
+                if part and part.Parent then
+                    part.CanCollide = collision
+                end
+            end
+        end
+    end
+end
 
 -- Função de proteção
 local function safeCall(func)
@@ -93,51 +131,49 @@ local function safeCall(func)
     return success
 end
 
--- FUNÇÃO HSL PARA RGB
-local function HSLToRGB(h, s, l)
-    h = h / 360
-    s = s / 100
-    l = l / 100
-    
-    local r, g, b
-    
-    if s == 0 then
-        r, g, b = l, l, l
-    else
-        local function hue2rgb(p, q, t)
-            if t < 0 then t = t + 1 end
-            if t > 1 then t = t - 1 end
-            if t < 1/6 then return p + (q - p) * 6 * t end
-            if t < 1/2 then return q end
-            if t < 2/3 then return p + (q - p) * (2/3 - t) * 6 end
-            return p
-        end
-        
-        local q = l < 0.5 and l * (1 + s) or l + s - l * s
-        local p = 2 * l - q
-        
-        r = hue2rgb(p, q, h + 1/3)
-        g = hue2rgb(p, q, h)
-        b = hue2rgb(p, q, h - 1/3)
-    end
-    
-    return Color3.fromRGB(math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
-end
-
--- FUNÇÃO PARA APLICAR CORES
+-- FUNÇÃO PARA APLICAR COR GERAL (Labels + FOV + TODOS os ESPs)
 local function ApplyGeneralColor(color)
     if not GUI then return end
     
-    -- Aplicar em TUDO (textos, bordas, backgrounds)
+    -- Aplicar em TODOS os textos do menu
     for _, obj in pairs(GUI:GetDescendants()) do
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            obj.TextColor3 = color
+            if obj.Name ~= "Title" then -- Exceto título
+                obj.TextColor3 = color
+            end
         end
-        if obj:IsA("UIStroke") then
-            obj.Color = color
-        end
-        if obj:IsA("Frame") and obj.Name ~= "MainFrame" and obj.BackgroundTransparency ~= 1 then
-            obj.BackgroundColor3 = color
+    end
+    
+    -- Atualizar cor do FOV Circle
+    if FOVCircle then
+        FOVCircle.Color = Color3.new(color.R, color.G, color.B)
+    end
+    
+    -- Atualizar cor de TODOS os ESPs ativos
+    for player, espData in pairs(ESPObjects) do
+        if espData then
+            -- Highlight
+            if espData.Highlight and not Settings.ESP.Team then
+                espData.Highlight.FillColor = color
+                espData.Highlight.OutlineColor = color
+            end
+            
+            -- Line
+            if espData.Line then
+                espData.Line.Color = Color3.new(color.R, color.G, color.B)
+            end
+            
+            -- Box
+            if espData.Box then
+                espData.Box.Color = Color3.new(color.R, color.G, color.B)
+            end
+            
+            -- Chams
+            if espData.Chams and not Settings.ESP.ChamsTeam then
+                for _, box in pairs(espData.Chams) do
+                    box.Color3 = color
+                end
+            end
         end
     end
 end
@@ -148,7 +184,9 @@ local function ApplyPanelOnlyColor(color)
     -- Aplicar APENAS em textos (não em backgrounds)
     for _, obj in pairs(GUI:GetDescendants()) do
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            obj.TextColor3 = color
+            if obj.Name ~= "Title" then
+                obj.TextColor3 = color
+            end
         end
         if obj:IsA("UIStroke") then
             obj.Color = color
@@ -194,8 +232,16 @@ local function UpdateAimbot()
         if Settings.Combat.AimbotType == "Ao mirar" then
             isAiming = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
         elseif Settings.Combat.AimbotType == "ToggleKey" then
-            isAiming = UserInputService:IsKeyDown(Settings.Combat.AimbotKey) or 
-                       UserInputService:IsMouseButtonPressed(Settings.Combat.AimbotKey)
+            -- Verificar se é tecla do teclado ou botão do mouse
+            if typeof(Settings.Combat.AimbotKey) == "EnumItem" then
+                if Settings.Combat.AimbotKey.EnumType == Enum.KeyCode then
+                    -- É uma tecla do teclado
+                    isAiming = UserInputService:IsKeyDown(Settings.Combat.AimbotKey)
+                elseif Settings.Combat.AimbotKey.EnumType == Enum.UserInputType then
+                    -- É um botão do mouse
+                    isAiming = UserInputService:IsMouseButtonPressed(Settings.Combat.AimbotKey)
+                end
+            end
         end
         
         if isAiming then
@@ -275,64 +321,87 @@ local function ApplyNoRecoil()
     end)
 end
 
--- ESP FUNCIONAL COM HEALTH BAR CORRIGIDA
+-- ESP FUNCIONAL COM TUDO CORRIGIDO
 local function CreateESP(player)
     if player == LocalPlayer then return end
     
+    -- Limpar ESP antigo se existir
+    if ESPObjects[player] then
+        for _, obj in pairs(ESPObjects[player]) do
+            if obj then
+                if typeof(obj) == "Instance" then
+                    obj:Destroy()
+                elseif typeof(obj) == "table" then
+                    if obj.Remove then obj:Remove() end
+                    if obj.Billboard then obj.Billboard:Destroy() end
+                end
+            end
+        end
+        ESPObjects[player] = nil
+    end
+    
     local function UpdateESP()
         safeCall(function()
-            if not Settings.ESP.Enabled then
+            if not player.Parent or not player.Character then 
+                -- Limpar se player saiu
                 if ESPObjects[player] then
                     for _, obj in pairs(ESPObjects[player]) do
                         if obj then
                             if typeof(obj) == "Instance" then
                                 obj:Destroy()
-                            elseif typeof(obj) == "table" and obj.Remove then
-                                obj:Remove()
+                            elseif typeof(obj) == "table" then
+                                if obj.Remove then obj:Remove() end
+                                if obj.Billboard then obj.Billboard:Destroy() end
                             end
                         end
                     end
                     ESPObjects[player] = nil
                 end
-                return
+                return 
             end
-            
-            if not player.Parent or not player.Character then return end
             
             ESPObjects[player] = ESPObjects[player] or {}
             
             -- Highlight ESP
-            if not ESPObjects[player].Highlight then
-                local highlight = Instance.new("Highlight")
-                highlight.Adornee = player.Character
-                highlight.FillColor = Color3.fromRGB(128, 128, 128)
-                highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                highlight.FillTransparency = 0.5
-                highlight.OutlineTransparency = 0
-                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                highlight.Parent = player.Character
-                ESPObjects[player].Highlight = highlight
+            if Settings.ESP.Enabled then
+                if not ESPObjects[player].Highlight then
+                    local highlight = Instance.new("Highlight")
+                    highlight.Adornee = player.Character
+                    highlight.FillTransparency = 0.5
+                    highlight.OutlineTransparency = 0
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    highlight.Parent = player.Character
+                    ESPObjects[player].Highlight = highlight
+                end
+                
+                -- Aplicar cor
+                if Settings.ESP.Team and player.Team then
+                    ESPObjects[player].Highlight.FillColor = player.Team.TeamColor.Color
+                    ESPObjects[player].Highlight.OutlineColor = player.Team.TeamColor.Color
+                else
+                    ESPObjects[player].Highlight.FillColor = Settings.Colors.General
+                    ESPObjects[player].Highlight.OutlineColor = Settings.Colors.General
+                end
+            else
+                if ESPObjects[player].Highlight then
+                    ESPObjects[player].Highlight:Destroy()
+                    ESPObjects[player].Highlight = nil
+                end
             end
             
-            -- ESP Team Colors
-            if Settings.ESP.Team and player.Team then
-                ESPObjects[player].Highlight.FillColor = player.Team.TeamColor.Color
-                ESPObjects[player].Highlight.OutlineColor = player.Team.TeamColor.Color
-            end
-            
-            -- ESP Health Bar CORRIGIDA (Tamanho Fixo)
-            if Settings.ESP.Health and player.Character:FindFirstChild("Head") and player.Character:FindFirstChild("Humanoid") then
+            -- ESP HEALTH BAR VERTICAL (Tamanho do Personagem)
+            if Settings.ESP.Health and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") then
                 if not ESPObjects[player].HealthBar then
                     local billboard = Instance.new("BillboardGui")
-                    billboard.Adornee = player.Character.Head
-                    billboard.Size = UDim2.new(0, 4, 0, 5) -- TAMANHO FIXO PEQUENO
-                    billboard.StudsOffset = Vector3.new(-2, 0, 0)
+                    billboard.Adornee = player.Character.HumanoidRootPart
+                    billboard.Size = UDim2.new(0, 4, 6, 0) -- ALTURA FIXA (6 studs = tamanho do personagem)
+                    billboard.StudsOffset = Vector3.new(-3, 0, 0)
                     billboard.AlwaysOnTop = true
-                    billboard.Parent = player.Character.Head
+                    billboard.Parent = player.Character.HumanoidRootPart
                     
                     local frame = Instance.new("Frame")
                     frame.Size = UDim2.new(1, 0, 1, 0)
-                    frame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+                    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
                     frame.BorderSizePixel = 1
                     frame.BorderColor3 = Color3.fromRGB(0, 0, 0)
                     frame.Parent = billboard
@@ -349,7 +418,7 @@ local function CreateESP(player)
                 local humanoid = player.Character.Humanoid
                 local healthPercent = humanoid.Health / humanoid.MaxHealth
                 
-                -- Atualizar tamanho da barra verticalmente
+                -- Atualizar tamanho da barra verticalmente (de baixo para cima)
                 ESPObjects[player].HealthBar.Bar.Size = UDim2.new(1, 0, healthPercent, 0)
                 ESPObjects[player].HealthBar.Bar.Position = UDim2.new(0, 0, 1 - healthPercent, 0)
                 
@@ -429,7 +498,6 @@ local function CreateESP(player)
                 if not ESPObjects[player].Line then
                     local line = Drawing.new("Line")
                     line.Visible = true
-                    line.Color = Color3.new(1, 1, 1)
                     line.Thickness = 1
                     line.Transparency = 1
                     ESPObjects[player].Line = line
@@ -442,6 +510,7 @@ local function CreateESP(player)
                     local startY = Settings.ESP.LinePlacement == "Top" and 0 or Camera.ViewportSize.Y
                     ESPObjects[player].Line.From = Vector2.new(Camera.ViewportSize.X / 2, startY)
                     ESPObjects[player].Line.To = Vector2.new(screenPos.X, screenPos.Y)
+                    ESPObjects[player].Line.Color = Color3.new(Settings.Colors.General.R, Settings.Colors.General.G, Settings.Colors.General.B)
                     ESPObjects[player].Line.Visible = true
                 else
                     ESPObjects[player].Line.Visible = false
@@ -456,7 +525,6 @@ local function CreateESP(player)
                 if not ESPObjects[player].Box then
                     local box = Drawing.new("Square")
                     box.Visible = true
-                    box.Color = Color3.new(1, 1, 1)
                     box.Thickness = 1
                     box.Transparency = 1
                     box.Filled = false
@@ -475,6 +543,7 @@ local function CreateESP(player)
                     
                     ESPObjects[player].Box.Size = Vector2.new(width, height)
                     ESPObjects[player].Box.Position = Vector2.new(screenPos.X - width / 2, screenPos.Y - height / 2)
+                    ESPObjects[player].Box.Color = Color3.new(Settings.Colors.General.R, Settings.Colors.General.G, Settings.Colors.General.B)
                     ESPObjects[player].Box.Visible = true
                 else
                     ESPObjects[player].Box.Visible = false
@@ -484,7 +553,7 @@ local function CreateESP(player)
                 ESPObjects[player].Box = nil
             end
             
-            -- Chams
+            -- Chams (BoxHandleAdornment)
             if Settings.ESP.Chams and player.Character then
                 if not ESPObjects[player].Chams then
                     ESPObjects[player].Chams = {}
@@ -497,7 +566,6 @@ local function CreateESP(player)
                             box.AlwaysOnTop = true
                             box.ZIndex = 10
                             box.Transparency = 0.5
-                            box.Color3 = Color3.fromRGB(128, 128, 128)
                             box.Parent = part
                             
                             table.insert(ESPObjects[player].Chams, box)
@@ -505,9 +573,12 @@ local function CreateESP(player)
                     end
                 end
                 
-                if Settings.ESP.ChamsTeam and player.Team then
-                    for _, box in pairs(ESPObjects[player].Chams) do
+                -- Aplicar cor
+                for _, box in pairs(ESPObjects[player].Chams) do
+                    if Settings.ESP.ChamsTeam and player.Team then
                         box.Color3 = player.Team.TeamColor.Color
+                    else
+                        box.Color3 = Settings.Colors.General
                     end
                 end
             elseif not Settings.ESP.Chams and ESPObjects[player].Chams then
@@ -516,14 +587,115 @@ local function CreateESP(player)
                 end
                 ESPObjects[player].Chams = nil
             end
+            
+            -- CHAMS SKIN (Player visível através das paredes com skin)
+            if Settings.ESP.ChamsSkin and player.Character then
+                if not ESPObjects[player].ChamsSkin then
+                    ESPObjects[player].ChamsSkin = {}
+                    
+                    -- Processar TODAS as partes do character
+                    for _, part in pairs(player.Character:GetDescendants()) do
+                        -- Para BaseParts (partes do corpo)
+                        if part:IsA("BasePart") then
+                            -- Criar Highlight individual para cada parte
+                            local highlight = Instance.new("Highlight")
+                            highlight.Adornee = part
+                            highlight.FillTransparency = 1 -- Totalmente transparente (mostra a skin)
+                            highlight.OutlineTransparency = 1 -- Sem contorno
+                            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            highlight.Parent = part
+                            
+                            table.insert(ESPObjects[player].ChamsSkin, highlight)
+                        end
+                        
+                        -- Para acessórios/roupas (MeshParts, Parts com texturas)
+                        if part:IsA("MeshPart") or part:IsA("Part") then
+                            -- Criar clone visual que sempre aparece
+                            if part:FindFirstChildOfClass("SpecialMesh") or part:FindFirstChildOfClass("Decal") then
+                                local highlight = Instance.new("Highlight")
+                                highlight.Adornee = part
+                                highlight.FillTransparency = 1
+                                highlight.OutlineTransparency = 1
+                                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                                highlight.Parent = part
+                                
+                                table.insert(ESPObjects[player].ChamsSkin, highlight)
+                            end
+                        end
+                        
+                        -- Para Decals (rostos, etc)
+                        if part:IsA("Decal") then
+                            -- Salvar transparência original
+                            if not ESPObjects[player].ChamsSkin[part] then
+                                ESPObjects[player].ChamsSkin[part] = part.Transparency
+                            end
+                        end
+                    end
+                    
+                    -- Aplicar renderização especial em TODAS as partes
+                    for _, part in pairs(player.Character:GetDescendants()) do
+                        if part:IsA("BasePart") or part:IsA("MeshPart") then
+                            -- Forçar renderização através das paredes
+                            part.LocalTransparencyModifier = 0
+                            
+                            -- Se tiver material/textura, manter visível
+                            if part:IsA("MeshPart") then
+                                -- MeshParts mantêm suas texturas
+                                local originalMaterial = part.Material
+                                part.Material = originalMaterial
+                            end
+                        end
+                    end
+                end
+                
+                -- Atualizar continuamente para garantir visibilidade
+                for _, part in pairs(player.Character:GetDescendants()) do
+                    if part:IsA("BasePart") or part:IsA("MeshPart") then
+                        part.LocalTransparencyModifier = 0
+                    end
+                end
+                
+            elseif not Settings.ESP.ChamsSkin and ESPObjects[player].ChamsSkin then
+                -- Limpar highlights
+                for i, highlight in pairs(ESPObjects[player].ChamsSkin) do
+                    if typeof(highlight) == "Instance" and highlight:IsA("Highlight") then
+                        highlight:Destroy()
+                    end
+                end
+                
+                -- Restaurar LocalTransparencyModifier
+                for _, part in pairs(player.Character:GetDescendants()) do
+                    if part:IsA("BasePart") or part:IsA("MeshPart") then
+                        part.LocalTransparencyModifier = 1
+                    end
+                end
+                
+                ESPObjects[player].ChamsSkin = nil
+            end
         end)
     end
     
-    player.CharacterAdded:Connect(function()
-        task.wait(0.5)
+    -- Conectar ao CharacterAdded para aplicar ESP quando player renascer
+    player.CharacterAdded:Connect(function(character)
+        task.wait(0.3) -- Aguardar character carregar
+        -- Limpar ESP antigo
+        if ESPObjects[player] then
+            for _, obj in pairs(ESPObjects[player]) do
+                if obj then
+                    if typeof(obj) == "Instance" then
+                        obj:Destroy()
+                    elseif typeof(obj) == "table" then
+                        if obj.Remove then obj:Remove() end
+                        if obj.Billboard then obj.Billboard:Destroy() end
+                    end
+                end
+            end
+            ESPObjects[player] = nil
+        end
         UpdateESP()
     end)
     
+    -- Atualizar ESP continuamente
     RunService.RenderStepped:Connect(UpdateESP)
 end
 
@@ -612,7 +784,7 @@ local function ToggleMacro(state)
 end
 
 -- ============================================
--- CRIAR PAINEL COM COLORS CORRETO
+-- CRIAR PAINEL COM RGB
 -- ============================================
 local function CreatePanel()
     local ScreenGui = Instance.new("ScreenGui")
@@ -648,6 +820,7 @@ local function CreatePanel()
     TitleStroke.Parent = TitleBar
     
     local Title = Instance.new("TextLabel")
+    Title.Name = "Title"
     Title.Size = UDim2.new(1, -120, 1, 0)
     Title.Position = UDim2.new(0, 15, 0, 0)
     Title.BackgroundTransparency = 1
@@ -969,92 +1142,9 @@ local function CreatePanel()
         return Frame
     end
     
-    local function CreateHSLSlider(parent, text, min, max, settingPath, callback)
-        local currentValue = Settings
-        for _, key in ipairs(settingPath) do
-            currentValue = currentValue[key]
-        end
-        
-        local Frame = Instance.new("Frame")
-        Frame.Size = UDim2.new(1, -10, 0, 55)
-        Frame.BackgroundTransparency = 1
-        Frame.Parent = parent
-        
-        local Label = Instance.new("TextLabel")
-        Label.Size = UDim2.new(1, 0, 0, 20)
-        Label.Position = UDim2.new(0, 5, 0, 0)
-        Label.BackgroundTransparency = 1
-        Label.Text = text .. ": " .. tostring(currentValue)
-        Label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        Label.Font = Enum.Font.Code
-        Label.TextSize = 13
-        Label.TextXAlignment = Enum.TextXAlignment.Left
-        Label.Parent = Frame
-        
-        local SliderBG = Instance.new("Frame")
-        SliderBG.Size = UDim2.new(1, -10, 0, 8)
-        SliderBG.Position = UDim2.new(0, 5, 0, 28)
-        SliderBG.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-        SliderBG.BorderSizePixel = 2
-        SliderBG.BorderColor3 = Color3.fromRGB(200, 200, 200)
-        SliderBG.Parent = Frame
-        
-        local SliderFill = Instance.new("Frame")
-        SliderFill.Size = UDim2.new((currentValue - min) / (max - min), 0, 1, 0)
-        SliderFill.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-        SliderFill.BorderSizePixel = 0
-        SliderFill.Parent = SliderBG
-        
-        local SliderButton = Instance.new("TextButton")
-        SliderButton.Size = UDim2.new(0, 16, 0, 16)
-        SliderButton.Position = UDim2.new((currentValue - min) / (max - min), -8, 0.5, -8)
-        SliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        SliderButton.BorderSizePixel = 2
-        SliderButton.BorderColor3 = Color3.fromRGB(200, 200, 200)
-        SliderButton.Text = ""
-        SliderButton.Parent = SliderBG
-        
-        local dragging = false
-        
-        SliderButton.MouseButton1Down:Connect(function()
-            dragging = true
-        end)
-        
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = false
-            end
-        end)
-        
-        RunService.RenderStepped:Connect(function()
-            if dragging then
-                local mouse = UserInputService:GetMouseLocation()
-                local relativeX = mouse.X - SliderBG.AbsolutePosition.X
-                local percentage = math.clamp(relativeX / SliderBG.AbsoluteSize.X, 0, 1)
-                local value = math.floor(min + (max - min) * percentage)
-                
-                local setting = Settings
-                for i = 1, #settingPath - 1 do
-                    setting = setting[settingPath[i]]
-                end
-                setting[settingPath[#settingPath]] = value
-                
-                SliderFill.Size = UDim2.new(percentage, 0, 1, 0)
-                SliderButton.Position = UDim2.new(percentage, -8, 0.5, -8)
-                Label.Text = text .. ": " .. tostring(value)
-                
-                if callback then
-                    callback(value)
-                end
-            end
-        end)
-        
-        return Frame
-    end
-    
     -- ===== CATEGORIAS =====
     
-    -- COMBAT (mesmo código do anterior)
+    -- COMBAT
     CreateCategoryButton("Combat", "⚔", function()
         local Container = Instance.new("Frame")
         Container.Name = "Container"
@@ -1072,7 +1162,98 @@ local function CreatePanel()
         Padding.Parent = Container
         
         CreateCheckbox(Container, "Aimbot", {"Combat", "Aimbot"}, function(state) end)
-        CreateDropdown(Container, "Type Of Aimbot", {"Ao mirar", "ToggleKey"}, {"Combat", "AimbotType"}, function(option) end)
+        
+        -- Dropdown Type Of Aimbot com KeySelector
+        local DropdownFrame = CreateDropdown(Container, "Type Of Aimbot", {"Ao mirar", "ToggleKey"}, {"Combat", "AimbotType"}, function(option)
+            -- Mostrar/Esconder KeySelector baseado na opção
+            if KeySelectorFrame then
+                KeySelectorFrame.Visible = (option == "ToggleKey")
+            end
+        end)
+        
+        -- KEY SELECTOR (aparece quando ToggleKey é selecionado)
+        local KeySelectorFrame = Instance.new("Frame")
+        KeySelectorFrame.Size = UDim2.new(1, -10, 0, 35)
+        KeySelectorFrame.BackgroundTransparency = 1
+        KeySelectorFrame.Visible = (Settings.Combat.AimbotType == "ToggleKey")
+        KeySelectorFrame.Parent = Container
+        
+        local KeyLabel = Instance.new("TextLabel")
+        KeyLabel.Size = UDim2.new(0.5, 0, 1, 0)
+        KeyLabel.Position = UDim2.new(0, 5, 0, 0)
+        KeyLabel.BackgroundTransparency = 1
+        KeyLabel.Text = "Select Key:"
+        KeyLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        KeyLabel.Font = Enum.Font.Code
+        KeyLabel.TextSize = 14
+        KeyLabel.TextXAlignment = Enum.TextXAlignment.Left
+        KeyLabel.Parent = KeySelectorFrame
+        
+        local KeyButton = Instance.new("TextButton")
+        KeyButton.Size = UDim2.new(0.48, 0, 0, 28)
+        KeyButton.Position = UDim2.new(0.52, 0, 0, 3.5)
+        KeyButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        KeyButton.BorderSizePixel = 2
+        KeyButton.BorderColor3 = Color3.fromRGB(200, 200, 200)
+        KeyButton.Text = "MouseButton2"
+        KeyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        KeyButton.Font = Enum.Font.Code
+        KeyButton.TextSize = 11
+        KeyButton.Parent = KeySelectorFrame
+        
+        -- Variável para indicar se está aguardando input
+        local waitingForInput = false
+        local inputConnection = nil
+        
+        KeyButton.MouseButton1Click:Connect(function()
+            if waitingForInput then return end
+            
+            waitingForInput = true
+            KeyButton.Text = "Press any key..."
+            KeyButton.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
+            
+            -- Limpar conexão anterior se existir
+            if inputConnection then
+                inputConnection:Disconnect()
+            end
+            
+            -- Aguardar qualquer input (tecla do teclado ou botão do mouse)
+            inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                if not waitingForInput then return end
+                
+                -- Aceitar QUALQUER input (tecla ou botão do mouse)
+                if input.UserInputType == Enum.UserInputType.Keyboard or 
+                   input.UserInputType == Enum.UserInputType.MouseButton1 or
+                   input.UserInputType == Enum.UserInputType.MouseButton2 or
+                   input.UserInputType == Enum.UserInputType.MouseButton3 then
+                    
+                    -- Salvar a tecla/botão selecionado
+                    if input.UserInputType == Enum.UserInputType.Keyboard then
+                        Settings.Combat.AimbotKey = input.KeyCode
+                        KeyButton.Text = input.KeyCode.Name
+                    else
+                        Settings.Combat.AimbotKey = input.UserInputType
+                        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                            KeyButton.Text = "LeftClick"
+                        elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+                            KeyButton.Text = "RightClick"
+                        elseif input.UserInputType == Enum.UserInputType.MouseButton3 then
+                            KeyButton.Text = "MiddleClick"
+                        end
+                    end
+                    
+                    -- Resetar estado
+                    waitingForInput = false
+                    KeyButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+                    
+                    -- Desconectar
+                    if inputConnection then
+                        inputConnection:Disconnect()
+                        inputConnection = nil
+                    end
+                end
+            end)
+        end)
         CreateCheckbox(Container, "FOV", {"Combat", "FOV"}, function(state)
             if FOVCircle then
                 FOVCircle.Visible = state
@@ -1113,11 +1294,86 @@ local function CreatePanel()
             end
         end)
         
+        -- DASH BUTTON
+        local DashTitle = Instance.new("TextLabel")
+        DashTitle.Size = UDim2.new(1, -10, 0, 25)
+        DashTitle.BackgroundTransparency = 1
+        DashTitle.Text = "Dash Button"
+        DashTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+        DashTitle.Font = Enum.Font.Code
+        DashTitle.TextSize = 15
+        DashTitle.TextXAlignment = Enum.TextXAlignment.Left
+        DashTitle.Parent = Container
+        
+        -- Dash Key Selector
+        local DashSelectorFrame = Instance.new("Frame")
+        DashSelectorFrame.Size = UDim2.new(1, -10, 0, 35)
+        DashSelectorFrame.BackgroundTransparency = 1
+        DashSelectorFrame.Parent = Container
+        
+        local DashLabel = Instance.new("TextLabel")
+        DashLabel.Size = UDim2.new(0.5, 0, 1, 0)
+        DashLabel.Position = UDim2.new(0, 5, 0, 0)
+        DashLabel.BackgroundTransparency = 1
+        DashLabel.Text = "Select Dash Key:"
+        DashLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        DashLabel.Font = Enum.Font.Code
+        DashLabel.TextSize = 14
+        DashLabel.TextXAlignment = Enum.TextXAlignment.Left
+        DashLabel.Parent = DashSelectorFrame
+        
+        local DashKeyButton = Instance.new("TextButton")
+        DashKeyButton.Size = UDim2.new(0.48, 0, 0, 28)
+        DashKeyButton.Position = UDim2.new(0.52, 0, 0, 3.5)
+        DashKeyButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        DashKeyButton.BorderSizePixel = 2
+        DashKeyButton.BorderColor3 = Color3.fromRGB(200, 200, 200)
+        DashKeyButton.Text = "Q"
+        DashKeyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        DashKeyButton.Font = Enum.Font.Code
+        DashKeyButton.TextSize = 11
+        DashKeyButton.Parent = DashSelectorFrame
+        
+        -- Variável global para tecla do dash
+        _G.DashKey = Enum.KeyCode.Q
+        
+        local waitingForDashInput = false
+        local dashInputConnection = nil
+        
+        DashKeyButton.MouseButton1Click:Connect(function()
+            if waitingForDashInput then return end
+            
+            waitingForDashInput = true
+            DashKeyButton.Text = "Press any key..."
+            DashKeyButton.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
+            
+            if dashInputConnection then
+                dashInputConnection:Disconnect()
+            end
+            
+            dashInputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                if not waitingForDashInput then return end
+                
+                if input.UserInputType == Enum.UserInputType.Keyboard then
+                    _G.DashKey = input.KeyCode
+                    DashKeyButton.Text = input.KeyCode.Name
+                    
+                    waitingForDashInput = false
+                    DashKeyButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+                    
+                    if dashInputConnection then
+                        dashInputConnection:Disconnect()
+                        dashInputConnection = nil
+                    end
+                end
+            end)
+        end)
+        
         Container.Size = UDim2.new(1, 0, 0, Layout.AbsoluteContentSize.Y)
         ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
     end)
     
-    -- ESP (mesmo código do anterior)
+    -- ESP COM CHAMS SKIN
     CreateCategoryButton("ESP", "👁", function()
         local Container = Instance.new("Frame")
         Container.Name = "Container"
@@ -1138,6 +1394,7 @@ local function CreatePanel()
         CreateCheckbox(Container, "ESP Team", {"ESP", "Team"}, function(state) end)
         CreateCheckbox(Container, "Chams", {"ESP", "Chams"}, function(state) end)
         CreateCheckbox(Container, "Chams Team", {"ESP", "ChamsTeam"}, function(state) end)
+        CreateCheckbox(Container, "Chams Skin", {"ESP", "ChamsSkin"}, function(state) end)
         CreateCheckbox(Container, "ESP Health", {"ESP", "Health"}, function(state) end)
         CreateCheckbox(Container, "ESP Name", {"ESP", "Name"}, function(state) end)
         CreateCheckbox(Container, "ESP Meters", {"ESP", "Meters"}, function(state) end)
@@ -1149,7 +1406,7 @@ local function CreatePanel()
         ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
     end)
     
-    -- COLORS COM HSL CORRETO
+    -- COLORS COM RGB
     CreateCategoryButton("Colors", "🎨", function()
         local Container = Instance.new("Frame")
         Container.Name = "Container"
@@ -1195,28 +1452,24 @@ local function CreatePanel()
         GeneralHex.TextXAlignment = Enum.TextXAlignment.Left
         GeneralHex.Parent = Container
         
-        CreateHSLSlider(Container, "Hue", 0, 360, {"Colors", "GeneralH"}, function(value)
-            local color = HSLToRGB(value, Settings.Colors.GeneralS, Settings.Colors.GeneralL)
+        local function UpdateGeneralColor()
+            local color = Color3.fromRGB(Settings.Colors.GeneralR, Settings.Colors.GeneralG, Settings.Colors.GeneralB)
             Settings.Colors.General = color
             GeneralPreview.BackgroundColor3 = color
-            GeneralHex.Text = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
+            GeneralHex.Text = string.format("#%02X%02X%02X", Settings.Colors.GeneralR, Settings.Colors.GeneralG, Settings.Colors.GeneralB)
             ApplyGeneralColor(color)
+        end
+        
+        CreateSlider(Container, "R (Red)", 0, 255, {"Colors", "GeneralR"}, function(value)
+            UpdateGeneralColor()
         end)
         
-        CreateHSLSlider(Container, "Saturation", 0, 100, {"Colors", "GeneralS"}, function(value)
-            local color = HSLToRGB(Settings.Colors.GeneralH, value, Settings.Colors.GeneralL)
-            Settings.Colors.General = color
-            GeneralPreview.BackgroundColor3 = color
-            GeneralHex.Text = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-            ApplyGeneralColor(color)
+        CreateSlider(Container, "G (Green)", 0, 255, {"Colors", "GeneralG"}, function(value)
+            UpdateGeneralColor()
         end)
         
-        CreateHSLSlider(Container, "Lightness", 0, 100, {"Colors", "GeneralL"}, function(value)
-            local color = HSLToRGB(Settings.Colors.GeneralH, Settings.Colors.GeneralS, value)
-            Settings.Colors.General = color
-            GeneralPreview.BackgroundColor3 = color
-            GeneralHex.Text = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-            ApplyGeneralColor(color)
+        CreateSlider(Container, "B (Blue)", 0, 255, {"Colors", "GeneralB"}, function(value)
+            UpdateGeneralColor()
         end)
         
         -- Separator
@@ -1255,35 +1508,31 @@ local function CreatePanel()
         PanelHex.TextXAlignment = Enum.TextXAlignment.Left
         PanelHex.Parent = Container
         
-        CreateHSLSlider(Container, "Hue", 0, 360, {"Colors", "PanelH"}, function(value)
-            local color = HSLToRGB(value, Settings.Colors.PanelS, Settings.Colors.PanelL)
+        local function UpdatePanelColor()
+            local color = Color3.fromRGB(Settings.Colors.PanelR, Settings.Colors.PanelG, Settings.Colors.PanelB)
             Settings.Colors.PanelOnly = color
             PanelPreview.BackgroundColor3 = color
-            PanelHex.Text = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
+            PanelHex.Text = string.format("#%02X%02X%02X", Settings.Colors.PanelR, Settings.Colors.PanelG, Settings.Colors.PanelB)
             ApplyPanelOnlyColor(color)
+        end
+        
+        CreateSlider(Container, "R (Red)", 0, 255, {"Colors", "PanelR"}, function(value)
+            UpdatePanelColor()
         end)
         
-        CreateHSLSlider(Container, "Saturation", 0, 100, {"Colors", "PanelS"}, function(value)
-            local color = HSLToRGB(Settings.Colors.PanelH, value, Settings.Colors.PanelL)
-            Settings.Colors.PanelOnly = color
-            PanelPreview.BackgroundColor3 = color
-            PanelHex.Text = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-            ApplyPanelOnlyColor(color)
+        CreateSlider(Container, "G (Green)", 0, 255, {"Colors", "PanelG"}, function(value)
+            UpdatePanelColor()
         end)
         
-        CreateHSLSlider(Container, "Lightness", 0, 100, {"Colors", "PanelL"}, function(value)
-            local color = HSLToRGB(Settings.Colors.PanelH, Settings.Colors.PanelS, value)
-            Settings.Colors.PanelOnly = color
-            PanelPreview.BackgroundColor3 = color
-            PanelHex.Text = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-            ApplyPanelOnlyColor(color)
+        CreateSlider(Container, "B (Blue)", 0, 255, {"Colors", "PanelB"}, function(value)
+            UpdatePanelColor()
         end)
         
         Container.Size = UDim2.new(1, 0, 0, Layout.AbsoluteContentSize.Y)
         ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
     end)
     
-    -- VARIOUS (mesmo código do anterior)
+    -- VARIOUS
     CreateCategoryButton("Various", "📦", function()
         local Container = Instance.new("Frame")
         Container.Name = "Container"
@@ -1351,7 +1600,178 @@ local function CreatePanel()
         ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
     end)
     
-    -- INFO (mesmo código do anterior)
+    -- TELEPORT
+    CreateCategoryButton("Teleport", "📍", function()
+        local Container = Instance.new("Frame")
+        Container.Name = "Container"
+        Container.Size = UDim2.new(1, 0, 0, 0)
+        Container.BackgroundTransparency = 1
+        Container.Parent = ContentFrame
+        
+        local Layout = Instance.new("UIListLayout")
+        Layout.Padding = UDim.new(0, 8)
+        Layout.Parent = Container
+        
+        local Padding = Instance.new("UIPadding")
+        Padding.PaddingTop = UDim.new(0, 15)
+        Padding.PaddingLeft = UDim.new(0, 10)
+        Padding.Parent = Container
+        
+        -- CREATE TELEPORT SECTION
+        local CreateTitle = Instance.new("TextLabel")
+        CreateTitle.Size = UDim2.new(1, -10, 0, 25)
+        CreateTitle.BackgroundTransparency = 1
+        CreateTitle.Text = "Create Teleport Point"
+        CreateTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+        CreateTitle.Font = Enum.Font.Code
+        CreateTitle.TextSize = 16
+        CreateTitle.TextXAlignment = Enum.TextXAlignment.Left
+        CreateTitle.Parent = Container
+        
+        -- Nome do Teleport
+        local NameFrame = Instance.new("Frame")
+        NameFrame.Size = UDim2.new(1, -10, 0, 35)
+        NameFrame.BackgroundTransparency = 1
+        NameFrame.Parent = Container
+        
+        local NameLabel = Instance.new("TextLabel")
+        NameLabel.Size = UDim2.new(0.35, 0, 1, 0)
+        NameLabel.Position = UDim2.new(0, 5, 0, 0)
+        NameLabel.BackgroundTransparency = 1
+        NameLabel.Text = "Point Name:"
+        NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        NameLabel.Font = Enum.Font.Code
+        NameLabel.TextSize = 14
+        NameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        NameLabel.Parent = NameFrame
+        
+        local NameInput = Instance.new("TextBox")
+        NameInput.Size = UDim2.new(0.63, 0, 0, 28)
+        NameInput.Position = UDim2.new(0.37, 0, 0, 3.5)
+        NameInput.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        NameInput.BorderSizePixel = 2
+        NameInput.BorderColor3 = Color3.fromRGB(200, 200, 200)
+        NameInput.Text = "My Point"
+        NameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+        NameInput.Font = Enum.Font.Code
+        NameInput.TextSize = 12
+        NameInput.ClearTextOnFocus = false
+        NameInput.Parent = NameFrame
+        
+        -- Botão Create
+        local CreateButton = Instance.new("TextButton")
+        CreateButton.Size = UDim2.new(1, -10, 0, 35)
+        CreateButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+        CreateButton.BorderSizePixel = 2
+        CreateButton.BorderColor3 = Color3.fromRGB(200, 200, 200)
+        CreateButton.Text = "Create Teleport"
+        CreateButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        CreateButton.Font = Enum.Font.Code
+        CreateButton.TextSize = 14
+        CreateButton.Parent = Container
+        
+        CreateButton.MouseButton1Click:Connect(function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local pointName = NameInput.Text
+                if pointName == "" then pointName = "Teleport Point" end
+                
+                -- Criar Part invisível na posição atual
+                local teleportPart = Instance.new("Part")
+                teleportPart.Size = Vector3.new(4, 1, 4)
+                teleportPart.Transparency = 1
+                teleportPart.CanCollide = false
+                teleportPart.Anchored = true
+                teleportPart.CFrame = LocalPlayer.Character.HumanoidRootPart.CFrame
+                teleportPart.Name = "TeleportPoint_" .. pointName
+                teleportPart.Parent = workspace
+                
+                -- Salvar ponto
+                table.insert(TeleportPoints, {
+                    Name = pointName,
+                    Part = teleportPart,
+                    Button = nil
+                })
+                
+                -- Criar botão para esse ponto
+                local TeleportButton = Instance.new("TextButton")
+                TeleportButton.Size = UDim2.new(1, -10, 0, 35)
+                TeleportButton.BackgroundColor3 = Color3.fromRGB(30, 30, 150)
+                TeleportButton.BorderSizePixel = 2
+                TeleportButton.BorderColor3 = Color3.fromRGB(200, 200, 200)
+                TeleportButton.Text = "📍 " .. pointName
+                TeleportButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+                TeleportButton.Font = Enum.Font.Code
+                TeleportButton.TextSize = 13
+                TeleportButton.Parent = Container
+                
+                -- Salvar referência do botão
+                TeleportPoints[#TeleportPoints].Button = TeleportButton
+                
+                -- Função de teleporte
+                TeleportButton.MouseButton1Click:Connect(function()
+                    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and teleportPart.Parent then
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = teleportPart.CFrame + Vector3.new(0, 3, 0)
+                    end
+                end)
+                
+                -- Botão Delete (clique direito)
+                TeleportButton.MouseButton2Click:Connect(function()
+                    -- Remover part
+                    if teleportPart.Parent then
+                        teleportPart:Destroy()
+                    end
+                    
+                    -- Remover botão
+                    TeleportButton:Destroy()
+                    
+                    -- Remover da tabela
+                    for i, point in pairs(TeleportPoints) do
+                        if point.Part == teleportPart then
+                            table.remove(TeleportPoints, i)
+                            break
+                        end
+                    end
+                end)
+                
+                -- Feedback visual
+                CreateButton.Text = "✓ Created!"
+                CreateButton.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+                task.wait(1)
+                CreateButton.Text = "Create Teleport"
+                CreateButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+                
+                -- Limpar nome
+                NameInput.Text = "My Point"
+                
+                -- Atualizar tamanho do container
+                Container.Size = UDim2.new(1, 0, 0, Layout.AbsoluteContentSize.Y)
+                ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
+            end
+        end)
+        
+        -- Separador
+        local Separator = Instance.new("Frame")
+        Separator.Size = UDim2.new(1, -10, 0, 2)
+        Separator.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+        Separator.BorderSizePixel = 0
+        Separator.Parent = Container
+        
+        -- Título da lista
+        local ListTitle = Instance.new("TextLabel")
+        ListTitle.Size = UDim2.new(1, -10, 0, 25)
+        ListTitle.BackgroundTransparency = 1
+        ListTitle.Text = "Saved Points (Right-click to delete)"
+        ListTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+        ListTitle.Font = Enum.Font.Code
+        ListTitle.TextSize = 12
+        ListTitle.TextXAlignment = Enum.TextXAlignment.Left
+        ListTitle.Parent = Container
+        
+        Container.Size = UDim2.new(1, 0, 0, Layout.AbsoluteContentSize.Y)
+        ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
+    end)
+    
+    -- INFO
     CreateCategoryButton("Info", "ℹ", function()
         local Container = Instance.new("Frame")
         Container.Name = "Container"
@@ -1498,26 +1918,35 @@ pcall(function()
             FOVCircle.Visible = Settings.Combat.FOV
             FOVCircle.Radius = Settings.Combat.FOVSize
             FOVCircle.Position = Vector2.new(Mouse.X, Mouse.Y + 36)
+            -- Atualizar cor do FOV de acordo com a cor geral
+            FOVCircle.Color = Color3.new(Settings.Colors.General.R, Settings.Colors.General.G, Settings.Colors.General.B)
         end
     end)
 end)
 
--- Criar ESP para todos
+-- Criar ESP para TODOS os players (incluindo os que já estão no jogo)
 for _, player in pairs(Players:GetPlayers()) do
-    CreateESP(player)
+    if player ~= LocalPlayer then
+        CreateESP(player)
+    end
 end
 
+-- Criar ESP quando NOVOS players entrarem
 Players.PlayerAdded:Connect(function(player)
     CreateESP(player)
 end)
 
+-- Limpar ESP quando player sair
 Players.PlayerRemoving:Connect(function(player)
     if ESPObjects[player] then
         for _, obj in pairs(ESPObjects[player]) do
-            if typeof(obj) == "Instance" then
-                obj:Destroy()
-            elseif typeof(obj) == "table" and obj.Remove then
-                obj:Remove()
+            if obj then
+                if typeof(obj) == "Instance" then
+                    obj:Destroy()
+                elseif typeof(obj) == "table" then
+                    if obj.Remove then obj:Remove() end
+                    if obj.Billboard then obj.Billboard:Destroy() end
+                end
             end
         end
         ESPObjects[player] = nil
@@ -1544,11 +1973,22 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             MainFrame.Visible = not MainFrame.Visible
         end
     end
+    
+    -- DASH KEY
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == _G.DashKey then
+        PerformDash()
+    end
 end)
 
 print("╔══════════════════════════════════════════╗")
 print("║  PANEL PVP CLASSIC MENU 1.0             ║")
-print("║  ESP HEALTH CORRIGIDA + COLORS FIXO     ║")
+print("║  ✅ VERSÃO FINAL COMPLETA               ║")
+print("╠══════════════════════════════════════════╣")
+print("║  ✅ RGB Colors (não HSL)                ║")
+print("║  ✅ Geral Color muda: Menu+FOV+ESPs     ║")
+print("║  ✅ ESP Health: Barra vertical fixa     ║")
+print("║  ✅ ESPs aplicam ao entrar/renascer     ║")
+print("║  ✅ Chams Skin: Player visível c/ skin  ║")
 print("╠══════════════════════════════════════════╣")
 print("║  SHIFT + Z: Toggle Panel                ║")
 print("║  Made by Barboza                         ║")
