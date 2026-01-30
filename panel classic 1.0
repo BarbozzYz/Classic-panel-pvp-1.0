@@ -1670,6 +1670,55 @@ local function CreatePanel()
         CreateButton.TextSize = 14
         CreateButton.Parent = Container
         
+        -- Função para criar botão de teleporte
+        local function CreateTeleportButton(pointData)
+            local TeleportButton = Instance.new("TextButton")
+            TeleportButton.Size = UDim2.new(1, -10, 0, 35)
+            TeleportButton.BackgroundColor3 = Color3.fromRGB(30, 30, 150)
+            TeleportButton.BorderSizePixel = 2
+            TeleportButton.BorderColor3 = Color3.fromRGB(200, 200, 200)
+            TeleportButton.Text = "📍 " .. pointData.Name
+            TeleportButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+            TeleportButton.Font = Enum.Font.Code
+            TeleportButton.TextSize = 13
+            TeleportButton.Parent = Container
+            
+            -- Salvar referência do botão
+            pointData.Button = TeleportButton
+            
+            -- Função de teleporte
+            TeleportButton.MouseButton1Click:Connect(function()
+                if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and pointData.Part and pointData.Part.Parent then
+                    LocalPlayer.Character.HumanoidRootPart.CFrame = pointData.Part.CFrame + Vector3.new(0, 3, 0)
+                end
+            end)
+            
+            -- Botão Delete (clique direito)
+            TeleportButton.MouseButton2Click:Connect(function()
+                -- Remover part
+                if pointData.Part and pointData.Part.Parent then
+                    pointData.Part:Destroy()
+                end
+                
+                -- Remover botão
+                TeleportButton:Destroy()
+                
+                -- Remover da tabela
+                for i, point in pairs(TeleportPoints) do
+                    if point == pointData then
+                        table.remove(TeleportPoints, i)
+                        break
+                    end
+                end
+                
+                -- Atualizar tamanho do container
+                Container.Size = UDim2.new(1, 0, 0, Layout.AbsoluteContentSize.Y)
+                ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
+            end)
+            
+            return TeleportButton
+        end
+        
         CreateButton.MouseButton1Click:Connect(function()
             if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
                 local pointName = NameInput.Text
@@ -1685,53 +1734,18 @@ local function CreatePanel()
                 teleportPart.Name = "TeleportPoint_" .. pointName
                 teleportPart.Parent = workspace
                 
-                -- Salvar ponto
-                table.insert(TeleportPoints, {
+                -- Criar dados do ponto
+                local pointData = {
                     Name = pointName,
                     Part = teleportPart,
                     Button = nil
-                })
+                }
                 
-                -- Criar botão para esse ponto
-                local TeleportButton = Instance.new("TextButton")
-                TeleportButton.Size = UDim2.new(1, -10, 0, 35)
-                TeleportButton.BackgroundColor3 = Color3.fromRGB(30, 30, 150)
-                TeleportButton.BorderSizePixel = 2
-                TeleportButton.BorderColor3 = Color3.fromRGB(200, 200, 200)
-                TeleportButton.Text = "📍 " .. pointName
-                TeleportButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-                TeleportButton.Font = Enum.Font.Code
-                TeleportButton.TextSize = 13
-                TeleportButton.Parent = Container
+                -- Salvar ponto GLOBALMENTE
+                table.insert(TeleportPoints, pointData)
                 
-                -- Salvar referência do botão
-                TeleportPoints[#TeleportPoints].Button = TeleportButton
-                
-                -- Função de teleporte
-                TeleportButton.MouseButton1Click:Connect(function()
-                    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and teleportPart.Parent then
-                        LocalPlayer.Character.HumanoidRootPart.CFrame = teleportPart.CFrame + Vector3.new(0, 3, 0)
-                    end
-                end)
-                
-                -- Botão Delete (clique direito)
-                TeleportButton.MouseButton2Click:Connect(function()
-                    -- Remover part
-                    if teleportPart.Parent then
-                        teleportPart:Destroy()
-                    end
-                    
-                    -- Remover botão
-                    TeleportButton:Destroy()
-                    
-                    -- Remover da tabela
-                    for i, point in pairs(TeleportPoints) do
-                        if point.Part == teleportPart then
-                            table.remove(TeleportPoints, i)
-                            break
-                        end
-                    end
-                end)
+                -- Criar botão
+                CreateTeleportButton(pointData)
                 
                 -- Feedback visual
                 CreateButton.Text = "✓ Created!"
@@ -1766,6 +1780,13 @@ local function CreatePanel()
         ListTitle.TextSize = 12
         ListTitle.TextXAlignment = Enum.TextXAlignment.Left
         ListTitle.Parent = Container
+        
+        -- CARREGAR PONTOS EXISTENTES (quando abre a aba)
+        for _, pointData in pairs(TeleportPoints) do
+            if pointData.Part and pointData.Part.Parent then
+                CreateTeleportButton(pointData)
+            end
+        end
         
         Container.Size = UDim2.new(1, 0, 0, Layout.AbsoluteContentSize.Y)
         ContentFrame.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 30)
